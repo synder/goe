@@ -3,28 +3,48 @@ package goe
 import (
 	"net/http"
 	"strconv"
+	"sync"
 )
 
 
 type Application struct {
+	sync.RWMutex
 	*Router
 
+	ViewPath string
+	ViewCache bool
+
+	render Render
 	locals map[string]string
 }
 
-func (app *Application) SetValue(key, value string) {
+func (app *Application) SetLocal(key, value string) {
+	app.Lock()
 	app.locals[key] = value
+	app.Unlock()
 }
 
-func (app *Application) GetValue(key string) string {
-	return app.locals[key]
+func (app *Application) GetLocal(key string) string {
+	app.RLock()
+	temp := app.locals[key]
+	app.RUnlock()
+	return temp
+}
+
+
+func (app *Application) Engine(engine Render) {
+	app.render = engine
+}
+
+func (app *Application) SubRouter() *Router{
+	return nil
 }
 
 
 func (app *Application) Listen(port int, host string) (string, error) {
-	addr := host + ":" + strconv.Itoa(port)
+	address := host + ":" + strconv.Itoa(port)
 	err := http.ListenAndServe(addr, app)
-	return addr, err
+	return address, err
 }
 
 func NewApp() *Application  {
@@ -35,6 +55,9 @@ func NewApp() *Application  {
 	app := &Application{
 		Router: router,
 		locals: locals,
+		render: NewDefaultRender(),
+		ViewCache: false,
+		ViewPath: "",
 	}
 
 	router.App = app

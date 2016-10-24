@@ -3,7 +3,6 @@ package goe
 import (
 	"net/http"
 	"strings"
-	"synder.me/goe/lib"
 )
 
 //Params define types
@@ -11,20 +10,11 @@ type Params map[string]string
 
 type Next func(err error)
 
-type HttpError struct {
-	Code int
-	Msg  string
-}
-
-func (e HttpError) Error() string {
-	return e.Msg
-}
-
 type ErrorHandler func(err *HttpError, context *Context)
 
 func DefaultErrorHandler(err *HttpError, context *Context) {
-	context.Response.Status(err.Code)
-	context.Response.Send([]byte(err.Error()))
+	context.Response.WriteHeader(err.Code)
+	context.Response.Write([]byte((*err).Error()))
 	return
 }
 
@@ -55,7 +45,7 @@ type tree struct {
 
 func (t *tree) match(pth string) ([]Handler, Params) {
 
-	pths := lib.Split(pth)
+	pths := SplitPath(pth)
 	length := len(pths)
 
 	//root
@@ -99,7 +89,7 @@ func (t *tree) match(pth string) ([]Handler, Params) {
 
 func (t *tree) add(pth string, handler Handler) {
 
-	pths := lib.Split(pth)
+	pths := SplitPath(pth)
 	var length int = len(pths)
 
 	//add intercetors or routers in root path "/"
@@ -266,7 +256,7 @@ func (r *Router) Error(handler ErrorHandler) {
 
 func (r *Router) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 
-	context := NewContext(NewRequest(req), NewResponse(writer), r)
+	context := NewContext(NewRequest(req, r.App), NewResponse(writer, r.App), r)
 
 	context.handle(nil)
 }

@@ -1,17 +1,29 @@
 package goe
 
 import (
-	"net/http"
-	"strconv"
-	"os"
-	"bufio"
 	"io"
+	"bytes"
+	"bufio"
+	"strconv"
 	"net/url"
+	"net/http"
+	"net"
+	"encoding/json"
+	"path"
+)
+
+const (
+	DEFAULT_SIZE = 0
+	DEFAULT_STATUS = -1
 )
 
 type Response struct {
 	http.ResponseWriter
-	status int
+
+	app *Application
+
+	size int  //content type
+	status int //response status
 }
 
 
@@ -24,34 +36,96 @@ func (res *Response) Get(key string) string {
 	return res.Header().Get(key)
 }
 
-func (res *Response) Status(code int) int{
-	if(code != 0){
-		res.status = code
-	}
+func (res *Response) Status() int {
 	return res.status
 }
 
-func (res *Response) Send(data []byte) {
-	res.WriteHeader(res.status)
-	res.Write(data)
+func (res *Response) Size() int {
+	return res.size
 }
 
-func (res *Response) Json(json string) {
-	res.Set("Content-Type", "application/json")
-	res.Send([]byte(json))
+func (res *Response) WriteHeader(code int) {
+	if res.status > 0 {
+		return
+	}
+
+	res.status = code
+
+	res.ResponseWriter.WriteHeader(res.status)
 }
 
-func (res *Response) Jsonp(json string) {
-
+func (res *Response) Write(data []byte) (int, error) {
+	n, err := res.ResponseWriter.Write(data)
+	res.size += n
+	return n, err
 }
 
-func (res *Response) Location(url string, code int) {
-	res.Set("Location", url)
-	res.Status(code)
+func (res *Response) WriteString(data string) (int, error){
+	n, err := io.WriteString(res.ResponseWriter, data)
+	res.size += n
+	return n, err
 }
 
-func (res *Response) Redirect(url string) {
-	res.Location(url, 302)
+func (res *Response) Json(obj interface{}) error {
+	res.Set("Content-Type", "application/json; charset=utf-8")
+	return json.NewEncoder(res).Encode(obj)
+}
+
+func (res *Response) Jsonp(obj interface{}) error {
+
+	res.Header().Set("Content-Type", "application/json; charset=utf-8")
+	res.Header().Set("X-Content-Type-Options", "nosniff")
+	results, err := json.Marshal(obj)
+
+	if err != nil {
+		return err
+	}
+
+	temp := [][]byte{
+		[]byte("/**/ typeof"),
+		[]byte("callback"),
+		[]byte(" === 'function' &&"),
+		[]byte("callback("),
+		results,
+		[]byte(");"),
+	}
+
+	body := bytes.Join(temp, []byte(" "))
+
+	res.Write(body)
+
+	return nil
+}
+
+func (res *Response) Render(tmpl string, obj interface{}, owr io.Writer) error {
+
+	tmpl = path.Join(res.app.ViewPath, tmpl)
+
+	//var wr io.Writer
+	//
+	//if owr != nil {
+	//	wr = io.MultiWriter(res, owr)
+	//}else{
+	//	wr = res
+	//}
+
+	err := res.app.render.Execute(res, res.app.ViewCache, tmpl, obj)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (res *Response) Redirect(status int, url string) {
+	if status > 300 && status < 400 {
+		res.Set("Location", url)
+		res.WriteHeader(status)
+	}else{
+		res.Set("Location", url)
+		res.WriteHeader(302)
+	}
 }
 
 func (res *Response) Refresh(url string, time int) {
@@ -59,34 +133,9 @@ func (res *Response) Refresh(url string, time int) {
 	res.Set("Refresh", value)
 }
 
-func (res *Response) Attachment(path, filename string) {
-	file, err := os.Open(path)
-
-	if err != nil {
-		//抛出错误
-	}
-
-	res.Set("Content-Disposition", "attachment;filename=" + url.QueryEscape(filename));
-
-	br := bufio.NewReader(file)
-	var temp = make([]byte, 512)
-
-	for{
-		n, err := br.Read(temp)
-		if err != nil {
-			if err == io.EOF {
-				break;
-			}else {
-				//抛出错误
-			}
-		}
-		res.Write(temp[:n])
-	}
-}
-
 func (res *Response) Download(data []byte, filename string) {
-	res.Write(data)
 	res.Set("Content-Disposition", "attachment;filename=" + url.QueryEscape(filename));
+	res.Write(data)
 }
 
 func (res *Response) Cookie(cookie *http.Cookie) {
@@ -103,21 +152,29 @@ func (res *Response) ClearCookie(name, path string) {
 	res.Cookie(cookie)
 }
 
-func (res *Response) Render(path string, send bool) []byte {
-
-	data := []byte{}
-
-	if send == true {
-		res.Set("Content-Type", "text/html")
-		res.Send(data)
+func (res *Response) Flush(){
+	if t, ok := res.ResponseWriter.(http.Flusher); ok {
+		t.Flush()
 	}
-
-	return data
 }
 
+func (res *Response) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if res.size < 0 {
+		res.size = 0
+	}
 
-func NewResponse(res http.ResponseWriter) *Response {
+	return res.ResponseWriter.(http.Hijacker).Hijack()
+}
+
+func (res *Response) CloseNotify() <-chan bool {
+	return res.ResponseWriter.(http.CloseNotifier).CloseNotify()
+}
+
+func NewResponse(res http.ResponseWriter, app *Application) *Response {
 	return &Response{
 		ResponseWriter: res,
+		app: app,
+		size: DEFAULT_SIZE,
+		status: DEFAULT_STATUS,
 	}
 }

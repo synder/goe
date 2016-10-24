@@ -8,19 +8,22 @@ import (
 type Request struct {
 	*http.Request
 
+	app *Application
+
 	params map[string]string
+	headers map[string]string
 }
 
 
-func (req *Request) Ip() string{
+func (req *Request) Proxy() string{
 	return req.Get("x-forwarded-for")
 }
 
-func (req *Request) ClientIP() string {
+func (req *Request) IP() string {
 	return req.RemoteAddr
 }
 
-func (req *Request) Xhr() bool{
+func (req *Request) XHR() bool{
 	var val = req.Get("x-requested-with");
 	return val != "" && strings.ToLower(val) == "xmlhttprequest";
 }
@@ -30,22 +33,31 @@ func (req *Request) Secure() bool{
 }
 
 func (req *Request) Set(key, value string) {
-	req.Header.Set(key, value)
+	if req.headers == nil {
+		req.headers = req.Headers()
+	}
+
+	req.headers[strings.ToLower(key)] = value
 }
 
 func (req *Request) Get(key string) string {
-	key = strings.ToLower(key)
-	return req.Headers()[key]
+	if req.headers == nil {
+		req.headers = req.Headers()
+	}
+
+	return req.headers[strings.ToLower(key)]
 }
 
 func (req *Request) Headers() map[string]string{
-	headers := make(map[string]string)
-
-	for key, value := range req.Header {
-		headers[strings.ToLower(key)] = strings.Join(value, "")
+	if req.headers == nil {
+		req.headers = make(map[string]string)
 	}
 
-	return headers
+	for key, value := range req.Request.Header {
+		req.headers[strings.ToLower(key)] = strings.Join(value, "")
+	}
+
+	return req.headers
 }
 
 func (req *Request) Query(key string) string  {
@@ -56,21 +68,6 @@ func (req *Request) Querys() map[string][]string{
 	return req.URL.Query()
 }
 
-func (req *Request) Cookie(key string) *http.Cookie{
-	cookies := req.Request.Cookies()
-
-	for _, cookie := range cookies{
-		if strings.ToLower(key) == strings.ToLower(cookie.Name){
-			return cookie
-		}
-	}
-	return nil
-}
-
-func (req *Request) Cookies(key string) []*http.Cookie {
-	return req.Request.Cookies()
-}
-
 func (req *Request) Param(key string) string {
 	return req.params[key]
 }
@@ -79,10 +76,11 @@ func (req *Request) Params(key string) map[string]string {
 	return req.params
 }
 
-
-func NewRequest(req *http.Request) *Request {
+func NewRequest(req *http.Request, app *Application) *Request {
 	return &Request{
 		Request: req,
+		app: app,
 		params: nil,
+		headers: nil,
 	}
 }
